@@ -14,16 +14,16 @@ from pathlib import Path
 from typing import Any
 
 from .chunking import chunk_document
-from .auth import get_async_anthropic_client
+from ..llm.auth import get_async_anthropic_client
 from .contextualizer import contextualize_chunks, estimate_cost
 from .metadata_extractor import extract_metadata_haiku, is_metadata_complete
-from .models import Chunk, Manifest, PaperMeta
+from ..models import Chunk, Manifest, PaperMeta
 from .parsing import (
     extract_authors_from_markdown,
     extract_title_from_markdown,
     parse_pdf,
 )
-from .paths import (
+from ..paths import (
     CHUNKS_DIR,
     MANIFEST_PATH,
     PAPERS_MARKDOWN_DIR,

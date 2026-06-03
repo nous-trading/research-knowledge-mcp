@@ -5,7 +5,7 @@ Public API:
     - ``get_anthropic_client`` / ``get_async_anthropic_client`` — resolved clients.
 """
 
-from .auth import (
+from .llm.auth import (
     get_anthropic_client,
     get_async_anthropic_client,
     set_oat_provider,

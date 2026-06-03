@@ -56,10 +56,10 @@ def _ensure_searcher():
     if _searcher is not None:
         return
 
-    from research_knowledge.embedding import DenseEmbedder
-    from research_knowledge.index import HybridIndex
-    from research_knowledge.reranker import Reranker
-    from research_knowledge.search import HybridSearcher
+    from research_knowledge.retrieval.embedding import DenseEmbedder
+    from research_knowledge.retrieval.index import HybridIndex
+    from research_knowledge.retrieval.reranker import Reranker
+    from research_knowledge.retrieval.search import HybridSearcher
 
     _index = HybridIndex.load()
     _embedder = DenseEmbedder()
@@ -268,7 +268,7 @@ async def summarize_paper_tool(
         focus: Summary focus topic (None defaults to 'algorithmic trading')
     """
     try:
-        from research_knowledge.summarizer import summarize_paper
+        from research_knowledge.llm.summarizer import summarize_paper
 
         return await summarize_paper(paper_id, focus=focus)
     except Exception as e:
@@ -288,7 +288,7 @@ async def get_concept_tool(
         concept_name: Concept name (e.g. "vpin", "kyle-lambda", "adverse-selection")
     """
     try:
-        from research_knowledge.concept_resolver import get_concept
+        from research_knowledge.llm.concept_resolver import get_concept
 
         result = get_concept(concept_name)
         return json.dumps(result, indent=2, ensure_ascii=False)

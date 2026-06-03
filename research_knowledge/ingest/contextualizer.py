@@ -16,8 +16,8 @@ from typing import Any
 
 from tqdm import tqdm
 
-from .auth import get_async_anthropic_client
-from .models import Chunk, PaperMeta, RawChunk
+from ..llm.auth import get_async_anthropic_client
+from ..models import Chunk, PaperMeta, RawChunk
 
 logger = logging.getLogger(__name__)
 

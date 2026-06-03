@@ -10,7 +10,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from .models import Chunk
+from ..models import Chunk
 
 logger = logging.getLogger(__name__)
 

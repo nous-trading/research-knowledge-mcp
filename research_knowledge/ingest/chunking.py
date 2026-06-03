@@ -10,7 +10,7 @@ import logging
 
 import tiktoken
 
-from .models import RawChunk
+from ..models import RawChunk
 from .parsing import StructuredBlock
 
 logger = logging.getLogger(__name__)

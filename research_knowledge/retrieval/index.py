@@ -15,9 +15,9 @@ import faiss
 
 from . import bm25_index
 from .embedding import DenseEmbedder
-from .ingest import load_all_chunks
-from .models import Chunk
-from .paths import INDEX_DIR
+from ..ingest.pipeline import load_all_chunks
+from ..models import Chunk
+from ..paths import INDEX_DIR
 
 logger = logging.getLogger(__name__)
 

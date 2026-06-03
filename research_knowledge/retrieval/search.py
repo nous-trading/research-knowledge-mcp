@@ -15,7 +15,7 @@ from collections import defaultdict
 from . import bm25_index
 from .embedding import DenseEmbedder
 from .index import HybridIndex
-from .models import ScoredChunk
+from ..models import ScoredChunk
 from .reranker import Reranker
 
 logger = logging.getLogger(__name__)

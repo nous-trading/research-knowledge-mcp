@@ -10,9 +10,9 @@ import logging
 
 
 from .auth import get_async_anthropic_client
-from .contextualizer import HAIKU_MODEL
-from .models import Manifest
-from .paths import MANIFEST_PATH, PAPERS_MARKDOWN_DIR
+from ..ingest.contextualizer import HAIKU_MODEL
+from ..models import Manifest
+from ..paths import MANIFEST_PATH, PAPERS_MARKDOWN_DIR
 
 logger = logging.getLogger(__name__)
 

@@ -42,5 +42,5 @@ dev = ["pytest>=8.0.0", "ruff>=0.6.0"]
 requires = ["setuptools>=75.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["research_knowledge"]
+[tool.setuptools.packages.find]
+include = ["research_knowledge*"]

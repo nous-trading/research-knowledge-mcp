@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import re
 
-from .paths import CONCEPTS_DIR
+from ..paths import CONCEPTS_DIR
 
 logger = logging.getLogger(__name__)
 

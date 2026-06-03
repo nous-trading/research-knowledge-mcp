@@ -39,7 +39,7 @@ def ingest(
     dry_run: bool = typer.Option(False, "--dry-run", "-n", help="Estimate cost only (no API calls)"),
 ) -> None:
     """Ingest a PDF file or directory into the knowledge base."""
-    from .ingest import ingest_directory, ingest_one_pdf
+    from .ingest.pipeline import ingest_directory, ingest_one_pdf
 
     p = Path(path)
     if not p.exists():
@@ -100,7 +100,7 @@ def status() -> None:
 @app.command("rebuild-index")
 def rebuild_index_cmd() -> None:
     """Rebuild the full search index from all ingested chunks."""
-    from .index import rebuild_index
+    from .retrieval.index import rebuild_index
 
     typer.echo("Rebuilding index...")
     idx = rebuild_index()
@@ -117,10 +117,10 @@ def search(
     debug: bool = typer.Option(False, "--debug", "-d", help="Enable per-stage debug logging"),
 ) -> None:
     """Run a hybrid search query against ingested papers."""
-    from .embedding import DenseEmbedder
-    from .index import HybridIndex
-    from .reranker import Reranker
-    from .search import HybridSearcher
+    from .retrieval.embedding import DenseEmbedder
+    from .retrieval.index import HybridIndex
+    from .retrieval.reranker import Reranker
+    from .retrieval.search import HybridSearcher
 
     if debug:
         logging.getLogger("research_knowledge").setLevel(logging.DEBUG)
@@ -156,7 +156,7 @@ def summarize(
     focus: str = typer.Option(None, "--focus", "-f", help="Summary focus topic"),
 ) -> None:
     """Summarize a paper using Claude Haiku."""
-    from .summarizer import summarize_paper
+    from .llm.summarizer import summarize_paper
 
     result = asyncio.run(summarize_paper(paper_id, focus=focus))
     typer.echo(result)
