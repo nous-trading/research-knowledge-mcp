@@ -6,8 +6,12 @@ All locations derive from a single data root, resolved in this order:
 2. ``./research-knowledge-data`` under the current working directory.
 
 Override the data root to point at an existing corpus, or to share one index
-across processes. Papers live under ``<data>/papers/{inbox,processed,markdown}``
-and the index under ``<data>/index``.
+across processes. Layout under the data root::
+
+    <data>/papers/{inbox,processed,markdown}   source PDFs + parsed markdown
+    <data>/chunks/{paper_id}.jsonl             contextualized chunks
+    <data>/manifest.json                       ingest catalog
+    <data>/index/{bm25.db,dense.faiss,chunks.json}   search index
 """
 
 from __future__ import annotations
@@ -31,10 +35,9 @@ PAPERS_PROCESSED_DIR = DATA_ROOT / "papers" / "processed"
 PAPERS_MARKDOWN_DIR = DATA_ROOT / "papers" / "markdown"
 
 # Index / runtime artifacts
-RESEARCH_INDEX_DIR = DATA_ROOT / "index"
-CHUNKS_DIR = RESEARCH_INDEX_DIR / "chunks"
-INDEX_DIR = RESEARCH_INDEX_DIR / "store"
-MANIFEST_PATH = RESEARCH_INDEX_DIR / "manifest.json"
+CHUNKS_DIR = DATA_ROOT / "chunks"
+INDEX_DIR = DATA_ROOT / "index"
+MANIFEST_PATH = DATA_ROOT / "manifest.json"
 
 # Optional concept definitions (markdown with frontmatter)
 CONCEPTS_DIR = DATA_ROOT / "concepts"

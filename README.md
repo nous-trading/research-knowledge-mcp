@@ -86,7 +86,9 @@ The data directory is laid out as:
 <data>/papers/inbox       ← drop PDFs here to ingest
 <data>/papers/processed   ← originals moved here after ingest
 <data>/papers/markdown    ← Docling markdown output
-<data>/index              ← FAISS + SQLite FTS5 + manifest
+<data>/chunks             ← contextualized chunks ({paper_id}.jsonl)
+<data>/manifest.json      ← ingest catalog
+<data>/index              ← FAISS + SQLite FTS5
 <data>/concepts           ← optional concept definitions (markdown + frontmatter)
 ```
 
