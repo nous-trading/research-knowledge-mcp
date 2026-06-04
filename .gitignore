@@ -28,7 +28,9 @@ papers/markdown/*
 .env.*
 !.env.example
 
-# OS / editor
+# OS / editor / agent tooling
 .DS_Store
 .idea/
 .vscode/
+.omc/
+.claude/
