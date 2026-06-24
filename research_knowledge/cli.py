@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+from pathlib import Path
 
 # Avoid a faiss + torch OpenMP clash (macOS ARM64 SEGFAULT)
 os.environ.setdefault("OMP_NUM_THREADS", "1")
