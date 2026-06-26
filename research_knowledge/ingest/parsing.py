@@ -118,7 +118,7 @@ def extract_title_from_markdown(markdown: str) -> str:
 def extract_authors_from_markdown(markdown: str) -> list[str]:
     """Attempt to extract authors from the early part of the markdown using heuristics."""
     # The lines immediately after the title often contain the authors
-    lines = [l.strip() for l in markdown.split("\n") if l.strip()]
+    lines = [line.strip() for line in markdown.split("\n") if line.strip()]
     if len(lines) < 2:
         return []
 

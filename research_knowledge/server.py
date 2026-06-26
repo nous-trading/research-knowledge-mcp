@@ -22,7 +22,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # Avoid a faiss + torch OpenMP clash (macOS ARM64 SEGFAULT)
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -306,7 +306,7 @@ async def health_check() -> str:
         {
             "status": "healthy",
             "server": "research-knowledge",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
     )
 

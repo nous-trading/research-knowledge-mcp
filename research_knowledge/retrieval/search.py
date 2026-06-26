@@ -12,10 +12,10 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 
+from ..models import ScoredChunk
 from . import bm25_index
 from .embedding import DenseEmbedder
 from .index import HybridIndex
-from ..models import ScoredChunk
 from .reranker import Reranker
 
 logger = logging.getLogger(__name__)
@@ -71,9 +71,9 @@ class HybridSearcher:
         if search_k == 0:
             dense_results: list[tuple[str, float]] = []
         else:
-            D, I = self.index.faiss_index.search(q_emb, search_k)
+            distances, indices = self.index.faiss_index.search(q_emb, search_k)
             dense_results = []
-            for d, i in zip(D[0], I[0]):
+            for d, i in zip(distances[0], indices[0], strict=True):
                 if i >= 0 and i < len(self.index.chunk_id_order):
                     cid = self.index.chunk_id_order[i]
                     # paper_ids filter

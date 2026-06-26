@@ -13,22 +13,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .chunking import chunk_document
 from ..llm.auth import get_async_anthropic_client
-from .contextualizer import contextualize_chunks, estimate_cost
-from .metadata_extractor import extract_metadata_haiku, is_metadata_complete
 from ..models import Chunk, Manifest, PaperMeta
-from .parsing import (
-    extract_authors_from_markdown,
-    extract_title_from_markdown,
-    parse_pdf,
-)
 from ..paths import (
     CHUNKS_DIR,
     MANIFEST_PATH,
     PAPERS_MARKDOWN_DIR,
     PAPERS_PROCESSED_DIR,
     ensure_dirs,
+)
+from .chunking import chunk_document
+from .contextualizer import contextualize_chunks, estimate_cost
+from .metadata_extractor import extract_metadata_haiku, is_metadata_complete
+from .parsing import (
+    extract_authors_from_markdown,
+    extract_title_from_markdown,
+    parse_pdf,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ def load_all_chunks() -> list[Chunk]:
     if not CHUNKS_DIR.exists():
         return chunks
     for jsonl_path in sorted(CHUNKS_DIR.glob("*.jsonl")):
-        with open(jsonl_path, "r", encoding="utf-8") as f:
+        with open(jsonl_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
@@ -190,8 +190,8 @@ async def ingest_one_pdf(
     md_path = PAPERS_MARKDOWN_DIR / f"{paper_id}.md"
     md_path.write_text(markdown, encoding="utf-8")
 
-    # Save JSONL
-    jsonl_path = _save_chunks_jsonl(paper_id, contextualized)
+    # Save JSONL (반환 경로는 미사용 — 저장 부작용만 필요)
+    _save_chunks_jsonl(paper_id, contextualized)
 
     # Move PDF to processed directory
     processed_path = PAPERS_PROCESSED_DIR / pdf_path.name

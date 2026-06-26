@@ -13,11 +13,11 @@ from pathlib import Path
 
 import faiss
 
-from . import bm25_index
-from .embedding import DenseEmbedder
 from ..ingest.pipeline import load_all_chunks
 from ..models import Chunk
 from ..paths import INDEX_DIR
+from . import bm25_index
+from .embedding import DenseEmbedder
 
 logger = logging.getLogger(__name__)
 

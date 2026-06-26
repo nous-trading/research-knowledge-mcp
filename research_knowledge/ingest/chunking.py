@@ -55,8 +55,6 @@ def chunk_document(
     pending_page_end = 0
 
     for block in blocks:
-        block_tokens = _count_tokens(block.text)
-
         # Flush pending text when a heading block is encountered
         if block.level > 0 and pending_text:
             pending_tokens = _count_tokens(pending_text)
