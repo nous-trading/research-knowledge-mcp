@@ -18,9 +18,11 @@ Usage:
 Port: 8014 (override with MCP_PORT env var)
 """
 
+import asyncio
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
@@ -68,6 +70,71 @@ def _ensure_searcher():
 
 
 # =============================================================================
+# Model idle TTL — searches load the two bge models (~2.5 GB accelerator
+# memory); a watchdog unloads them after RESEARCH_KNOWLEDGE_MODEL_TTL_SECONDS
+# of no searches (default 600, 0 disables) so an idle server holds ~0.
+# =============================================================================
+_MODEL_TTL_SECONDS = int(os.environ.get("RESEARCH_KNOWLEDGE_MODEL_TTL_SECONDS", "600"))
+_last_search_ts: float = 0.0
+_ttl_watchdog: asyncio.Task | None = None
+
+
+def _touch_models() -> None:
+    """Record model use and arm the idle watchdog (call from async context)."""
+    global _last_search_ts, _ttl_watchdog
+    _last_search_ts = time.monotonic()
+    if _MODEL_TTL_SECONDS <= 0:
+        return
+    if _ttl_watchdog is None or _ttl_watchdog.done():
+        _ttl_watchdog = asyncio.get_running_loop().create_task(_ttl_loop())
+
+
+async def _ttl_loop() -> None:
+    from research_knowledge.retrieval.embedding import DenseEmbedder
+    from research_knowledge.retrieval.reranker import Reranker
+
+    while True:
+        await asyncio.sleep(min(_MODEL_TTL_SECONDS, 60))
+        if time.monotonic() - _last_search_ts >= _MODEL_TTL_SECONDS:
+            DenseEmbedder.unload()
+            Reranker.unload()
+            return  # re-armed by the next search
+
+
+# =============================================================================
+# Manifest brief cache — search results only need title/citation fields, and
+# Manifest.load() parses the full manifest (45 MB on the Discord corpus) on
+# every call. Cache a slim projection, invalidated by file mtime.
+# =============================================================================
+_briefs: dict | None = None
+_briefs_mtime: float | None = None
+
+
+def _manifest_briefs() -> dict:
+    """paper_id → {title, citation_key} projection of the manifest."""
+    global _briefs, _briefs_mtime
+    from research_knowledge.models import Manifest
+    from research_knowledge.paths import MANIFEST_PATH
+
+    mtime = MANIFEST_PATH.stat().st_mtime if MANIFEST_PATH.exists() else None
+    if _briefs is not None and mtime == _briefs_mtime:
+        return _briefs
+
+    manifest = Manifest.load(MANIFEST_PATH)
+    _briefs = {
+        pid: {
+            "title": p.title,
+            "citation_key": (
+                f"{p.authors[0].split()[-1] if p.authors else 'unknown'}{p.year or ''}"
+            ),
+        }
+        for pid, p in manifest.papers.items()
+    }
+    _briefs_mtime = mtime
+    return _briefs
+
+
+# =============================================================================
 # Tool 1: search_papers
 # =============================================================================
 @app.tool(annotations={"readOnlyHint": True})
@@ -93,26 +160,24 @@ async def search_papers(
                 ensure_ascii=False,
             )
 
+        _touch_models()
         results = _searcher.search(query, top_k=top_k, paper_ids=paper_ids)
 
-        from research_knowledge.models import Manifest
-        from research_knowledge.paths import MANIFEST_PATH
-
-        manifest = Manifest.load(MANIFEST_PATH)
+        briefs = _manifest_briefs()
 
         output = []
         for sc in results:
             chunk = sc.chunk
-            paper = manifest.papers.get(chunk.paper_id)
+            brief = briefs.get(chunk.paper_id)
             output.append(
                 {
                     "paper_id": chunk.paper_id,
-                    "title": paper.title if paper else "unknown",
+                    "title": brief["title"] if brief else "unknown",
                     "section": "/".join(chunk.section_path) or "root",
                     "page_range": f"{chunk.page_start}-{chunk.page_end}",
                     "snippet": chunk.raw_text[:500],
                     "score": round(sc.score, 4),
-                    "citation_key": f"{(paper.authors[0].split()[-1] if paper and paper.authors else 'unknown')}{paper.year or ''}" if paper else chunk.paper_id,
+                    "citation_key": brief["citation_key"] if brief else chunk.paper_id,
                 }
             )
 
@@ -317,13 +382,19 @@ def main() -> None:
     Transport is selected via ``MCP_TRANSPORT`` (``stdio`` default, or
     ``streamable-http`` on ``MCP_PORT``, default 8014).
     """
+    # journalctl 관측성: 모델 로드/언로드·인덱스 로드 INFO 가 systemd 저널에 남도록
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport == "stdio":
         app.run(transport="stdio", show_banner=False)
     else:
         app.run(
             transport="streamable-http",
-            host="127.0.0.1",
+            host=os.environ.get("MCP_HOST", "127.0.0.1"),
             port=int(os.environ.get("MCP_PORT", 8014)),
             show_banner=False,
             stateless_http=True,

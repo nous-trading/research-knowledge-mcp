@@ -44,6 +44,15 @@ class DenseEmbedder:
         )
         logger.info("bge-m3 model loaded.")
 
+    @classmethod
+    def unload(cls) -> None:
+        """Release the model and its accelerator memory (idle TTL)."""
+        if cls._model is None:
+            return
+        cls._model = None
+        _release_accelerator_memory()
+        logger.info("bge-m3 model unloaded.")
+
     def encode(self, texts: list[str], batch_size: int | None = None) -> np.ndarray:
         """Encode a list of texts into dense vectors.
 
@@ -67,3 +76,20 @@ class DenseEmbedder:
         )
         vecs = out["dense_vecs"]  # (N, 1024), already normalized
         return np.array(vecs, dtype=np.float32)
+
+
+def _release_accelerator_memory() -> None:
+    """Return cached accelerator memory to the OS after a model unload.
+
+    On Apple Silicon the MPS caching allocator otherwise keeps multi-GB
+    IOAccelerator residency alive for the process lifetime.
+    """
+    import gc
+
+    gc.collect()
+    import torch
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()

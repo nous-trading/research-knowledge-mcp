@@ -22,10 +22,29 @@ class Reranker:
         if Reranker._model is not None:
             return
         logger.info("Loading bge-reranker-v2-m3 model (CrossEncoder)...")
+        import torch
         from sentence_transformers import CrossEncoder
 
-        Reranker._model = CrossEncoder("BAAI/bge-reranker-v2-m3")
+        # fp16 on CUDA: halves VRAM (2.3 → 1.2 GB) so the research- and
+        # discord-knowledge services fit the RTX 2070 together, and ~2x faster.
+        kwargs = (
+            {"model_kwargs": {"torch_dtype": torch.float16}}
+            if torch.cuda.is_available()
+            else {}
+        )
+        Reranker._model = CrossEncoder("BAAI/bge-reranker-v2-m3", **kwargs)
         logger.info("bge-reranker-v2-m3 model loaded.")
+
+    @classmethod
+    def unload(cls) -> None:
+        """Release the model and its accelerator memory (idle TTL)."""
+        if cls._model is None:
+            return
+        cls._model = None
+        from .embedding import _release_accelerator_memory
+
+        _release_accelerator_memory()
+        logger.info("bge-reranker-v2-m3 model unloaded.")
 
     def rerank(
         self,
