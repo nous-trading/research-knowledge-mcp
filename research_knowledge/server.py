@@ -24,6 +24,7 @@ import logging
 import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
@@ -53,11 +54,16 @@ async def _lifespan(app):
 app = FastMCP("research-knowledge", lifespan=_lifespan)
 
 
-# Serializes model use in a worker thread; searches run via asyncio.to_thread
-# so the shared HTTP daemon's event loop stays responsive during a cold model
-# load (~20 s) or rerank. The TTL watchdog takes the same lock non-blockingly,
-# so it can never unload models mid-search.
+# Searches run off the event loop so the shared HTTP daemon stays responsive
+# during a cold model load (~20 s) or rerank — but on a DEDICATED single
+# thread, not asyncio.to_thread's shared pool: the index's sqlite3 connections
+# are bound to their creating thread (check_same_thread), so a pool would
+# raise "SQLite objects created in a thread can only be used in that same
+# thread" as soon as two searches land on different pool threads.
+# The TTL watchdog takes the lock non-blockingly, so it can never unload
+# models mid-search.
 _search_lock = threading.Lock()
+_search_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rk-search")
 
 
 def _ensure_searcher():
@@ -186,7 +192,9 @@ async def search_papers(
     """
     try:
         _touch_models()
-        results = await asyncio.to_thread(_run_search, query, top_k, paper_ids)
+        results = await asyncio.get_running_loop().run_in_executor(
+            _search_executor, _run_search, query, top_k, paper_ids
+        )
         if results is None:
             return json.dumps(
                 {"error": "Index not found. Run rebuild-index first."},
