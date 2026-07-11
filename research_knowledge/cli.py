@@ -106,9 +106,32 @@ def rebuild_index_cmd() -> None:
     typer.echo("Rebuilding index...")
     idx = rebuild_index()
     typer.echo(
-        f"Index rebuild complete: {len(idx.chunks)} chunks, "
+        f"Index rebuild complete: {idx.chunks_count} chunks, "
         f"faiss={idx.faiss_index is not None}, bm25={idx.bm25_db is not None}"
     )
+
+
+@app.command("migrate-index")
+def migrate_index_cmd() -> None:
+    """One-off migration: legacy index/chunks.json → index/chunks.db.
+
+    Converts the in-RAM chunk metadata format to the SQLite chunk store.
+    The legacy JSON is kept as chunks.json.bak until you delete it.
+    """
+    from .paths import INDEX_DIR
+    from .retrieval import chunk_store
+
+    meta_path = INDEX_DIR / "chunks.json"
+    db_path = INDEX_DIR / "chunks.db"
+    if db_path.exists():
+        typer.echo(f"Already migrated: {db_path} exists.")
+        raise typer.Exit(0)
+    if not meta_path.exists():
+        typer.echo(f"Nothing to migrate: {meta_path} not found.", err=True)
+        raise typer.Exit(1)
+
+    n = chunk_store.migrate_from_json(meta_path, db_path)
+    typer.echo(f"Migrated {n} chunks → {db_path}")
 
 
 @app.command()

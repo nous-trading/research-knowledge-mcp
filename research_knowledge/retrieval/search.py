@@ -3,13 +3,18 @@
 Search pipeline:
 1. BM25 top-150
 2. Dense top-150
-3. RRF fusion (k=60) → top-150
+3. RRF fusion (k=60) → rerank candidates (RESEARCH_KNOWLEDGE_RERANK_CANDIDATES)
 4. bge-reranker-v2-m3 cross-encoder → top-N
+
+The cross-encoder is linear in candidate count and dominates latency
+(~270 ms/doc on Apple-Silicon CPU, ~27 ms/doc on RTX 2070), so the
+candidate cap is the main speed knob.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from collections import defaultdict
 
 from ..models import ScoredChunk
@@ -40,6 +45,7 @@ class HybridSearcher:
         top_k: int = 20,
         paper_ids: list[str] | None = None,
         debug: bool = False,
+        rerank_candidates: int | None = None,
     ) -> list[ScoredChunk]:
         """Run a hybrid search.
 
@@ -48,10 +54,17 @@ class HybridSearcher:
             top_k: Number of final results to return
             paper_ids: Restrict results to these paper IDs (None means all)
             debug: When True, log intermediate results at each stage
+            rerank_candidates: RRF-fused candidates passed to the
+                cross-encoder (None → RESEARCH_KNOWLEDGE_RERANK_CANDIDATES
+                env, default 150)
 
         Returns:
             List of ScoredChunk sorted by score descending
         """
+        if rerank_candidates is None:
+            rerank_candidates = int(
+                os.environ.get("RESEARCH_KNOWLEDGE_RERANK_CANDIDATES", "150")
+            )
         if not self.index.is_ready:
             logger.warning("Index is not ready. Run rebuild-index first.")
             return []
@@ -72,14 +85,18 @@ class HybridSearcher:
             dense_results: list[tuple[str, float]] = []
         else:
             distances, indices = self.index.faiss_index.search(q_emb, search_k)
-            dense_results = []
-            for d, i in zip(distances[0], indices[0], strict=True):
-                if i >= 0 and i < len(self.index.chunk_id_order):
-                    cid = self.index.chunk_id_order[i]
-                    # paper_ids filter
-                    if paper_ids and self.index.chunks[cid].paper_id not in paper_ids:
-                        continue
-                    dense_results.append((cid, float(d)))
+            hits = [
+                (self.index.chunk_id_order[i], float(d))
+                for d, i in zip(distances[0], indices[0], strict=True)
+                if 0 <= i < len(self.index.chunk_id_order)
+            ]
+            if paper_ids:
+                hit_paper_ids = self.index.get_paper_ids([cid for cid, _ in hits])
+                hits = [
+                    (cid, d) for cid, d in hits
+                    if hit_paper_ids.get(cid) in paper_ids
+                ]
+            dense_results = hits
 
         if debug:
             logger.info("Dense results: %d", len(dense_results))
@@ -93,7 +110,9 @@ class HybridSearcher:
         for rank, (cid, _) in enumerate(dense_results):
             rrf_scores[cid] += 1.0 / (60 + rank)
 
-        fused = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[:150]
+        fused = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)[
+            :rerank_candidates
+        ]
 
         if debug:
             logger.info("RRF fusion results: %d", len(fused))
@@ -103,12 +122,13 @@ class HybridSearcher:
         if not fused:
             return []
 
-        # 4) Rerank → top-N
+        # 4) Rerank → top-N (candidate texts fetched on demand from SQLite)
+        fused_texts = self.index.get_texts([cid for cid, _ in fused])
         docs = []
         valid_fused: list[tuple[str, float]] = []
         for cid, score in fused:
-            if cid in self.index.chunks:
-                docs.append(self.index.chunks[cid].contextualized_text)
+            if cid in fused_texts:
+                docs.append(fused_texts[cid])
                 valid_fused.append((cid, score))
 
         if not docs:
@@ -122,15 +142,10 @@ class HybridSearcher:
                 cid = valid_fused[orig_idx][0]
                 logger.info("  Rerank: %s → %.4f", cid, score)
 
-        results: list[ScoredChunk] = []
-        for orig_idx, score in reranked:
-            cid = valid_fused[orig_idx][0]
-            if cid in self.index.chunks:
-                results.append(
-                    ScoredChunk(
-                        chunk=self.index.chunks[cid],
-                        score=score,
-                    )
-                )
-
-        return results
+        top_ids = [valid_fused[orig_idx][0] for orig_idx, _ in reranked]
+        top_chunks = self.index.get_chunks(top_ids)
+        return [
+            ScoredChunk(chunk=top_chunks[cid], score=score)
+            for (orig_idx, score), cid in zip(reranked, top_ids, strict=True)
+            if cid in top_chunks
+        ]

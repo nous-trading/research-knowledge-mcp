@@ -11,7 +11,7 @@ across processes. Layout under the data root::
     <data>/papers/{inbox,processed,markdown}   source PDFs + parsed markdown
     <data>/chunks/{paper_id}.jsonl             contextualized chunks
     <data>/manifest.json                       ingest catalog
-    <data>/index/{bm25.db,dense.faiss,chunks.json}   search index
+    <data>/index/{bm25.db,dense.faiss,chunks.db}    search index
 """
 
 from __future__ import annotations

@@ -2,11 +2,14 @@
 
 faiss supports CPU only (MPS not supported). Embedding runs on MPS while the
 index runs on CPU, keeping the two devices separate.
+
+Chunk bodies live in ``chunks.db`` (SQLite) and are fetched on demand — a
+search touches only the rerank candidates, so nothing corpus-sized is held
+in RAM (the legacy ``chunks.json`` dict cost ~3.9 GB on the Discord corpus).
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 from pathlib import Path
@@ -16,14 +19,15 @@ import faiss
 from ..ingest.pipeline import load_all_chunks
 from ..models import Chunk
 from ..paths import INDEX_DIR
-from . import bm25_index
+from . import bm25_index, chunk_store
 from .embedding import DenseEmbedder
 
 logger = logging.getLogger(__name__)
 
 _BM25_DB_NAME = "bm25.db"
 _FAISS_INDEX_NAME = "dense.faiss"
-_CHUNKS_META_NAME = "chunks.json"
+_CHUNKS_DB_NAME = "chunks.db"
+_LEGACY_META_NAME = "chunks.json"
 
 
 class HybridIndex:
@@ -33,8 +37,9 @@ class HybridIndex:
         self.index_dir = index_dir
         self.bm25_db: sqlite3.Connection | None = None
         self.faiss_index: faiss.IndexFlatIP | None = None
+        self.chunks_db: sqlite3.Connection | None = None
         self.chunk_id_order: list[str] = []
-        self.chunks: dict[str, Chunk] = {}
+        self.chunks_count: int = 0
 
     @classmethod
     def build_from_chunks(
@@ -79,10 +84,12 @@ class HybridIndex:
         instance.faiss_index = faiss.IndexFlatIP(dim)
         instance.faiss_index.add(embeddings)
 
-        # Save metadata
+        # Chunk store (row order = faiss vector order)
+        instance.chunks_db = chunk_store.create(index_dir / _CHUNKS_DB_NAME)
+        chunk_store.add_chunks(instance.chunks_db, chunks)
         instance.chunk_id_order = [c.chunk_id for c in chunks]
-        instance.chunks = {c.chunk_id: c for c in chunks}
-        instance._save_meta()
+        instance.chunks_count = len(chunks)
+        instance._save_faiss()
 
         logger.info(
             "Index build complete: %d chunks, %dd vectors, BM25 + faiss",
@@ -91,33 +98,21 @@ class HybridIndex:
         )
         return instance
 
-    def _save_meta(self) -> None:
-        """Persist the faiss index and chunk metadata to disk."""
-        # Save faiss index
+    def _save_faiss(self) -> None:
+        """Persist the faiss index to disk."""
         if self.faiss_index is not None:
             faiss.write_index(
                 self.faiss_index, str(self.index_dir / _FAISS_INDEX_NAME)
             )
 
-        # Save chunk metadata
-        meta = {
-            "chunk_id_order": self.chunk_id_order,
-            "chunks": {
-                cid: chunk.model_dump() for cid, chunk in self.chunks.items()
-            },
-        }
-        meta_path = self.index_dir / _CHUNKS_META_NAME
-        meta_path.write_text(
-            json.dumps(meta, ensure_ascii=False, default=str), encoding="utf-8"
-        )
-
     def _save_empty(self) -> None:
         """Persist an empty index to disk."""
         self.chunk_id_order = []
-        self.chunks = {}
+        self.chunks_count = 0
         self.faiss_index = faiss.IndexFlatIP(1024)
         self.bm25_db = bm25_index.create_index(self.index_dir / _BM25_DB_NAME)
-        self._save_meta()
+        self.chunks_db = chunk_store.create(self.index_dir / _CHUNKS_DB_NAME)
+        self._save_faiss()
 
     @classmethod
     def load(cls, index_dir: Path | None = None) -> HybridIndex:
@@ -130,19 +125,24 @@ class HybridIndex:
             index_dir = INDEX_DIR
 
         instance = cls(index_dir)
-        meta_path = index_dir / _CHUNKS_META_NAME
+        chunks_db_path = index_dir / _CHUNKS_DB_NAME
 
-        if not meta_path.exists():
-            logger.warning("Index metadata not found: %s — returning empty index", meta_path)
+        if not chunks_db_path.exists():
+            legacy = index_dir / _LEGACY_META_NAME
+            if legacy.exists():
+                raise RuntimeError(
+                    f"Legacy index format at {index_dir}: found {_LEGACY_META_NAME} "
+                    f"but no {_CHUNKS_DB_NAME}. Run "
+                    "`python -m research_knowledge.cli migrate-index` once."
+                )
+            logger.warning(
+                "Chunk store not found: %s — returning empty index", chunks_db_path
+            )
             return instance
 
-        # Load metadata
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        instance.chunk_id_order = meta.get("chunk_id_order", [])
-        instance.chunks = {
-            cid: Chunk.model_validate(data)
-            for cid, data in meta.get("chunks", {}).items()
-        }
+        instance.chunks_db = chunk_store.open_store(chunks_db_path)
+        instance.chunk_id_order = chunk_store.id_order(instance.chunks_db)
+        instance.chunks_count = len(instance.chunk_id_order)
 
         # Load faiss index
         faiss_path = index_dir / _FAISS_INDEX_NAME
@@ -156,11 +156,27 @@ class HybridIndex:
 
         logger.info(
             "Index loaded: %d chunks, faiss=%s, bm25=%s",
-            len(instance.chunks),
+            instance.chunks_count,
             instance.faiss_index is not None,
             instance.bm25_db is not None,
         )
         return instance
+
+    # ------------------------------------------------------------------
+    # On-demand chunk access (delegates to the SQLite chunk store)
+    # ------------------------------------------------------------------
+
+    def get_chunks(self, chunk_ids: list[str]) -> dict[str, Chunk]:
+        """Fetch full Chunk objects for the given ids."""
+        return chunk_store.get_by_ids(self.chunks_db, chunk_ids)
+
+    def get_texts(self, chunk_ids: list[str]) -> dict[str, str]:
+        """Fetch contextualized_text (rerank input) for the given ids."""
+        return chunk_store.texts_by_ids(self.chunks_db, chunk_ids)
+
+    def get_paper_ids(self, chunk_ids: list[str]) -> dict[str, str]:
+        """Fetch chunk_id → paper_id for the given ids."""
+        return chunk_store.paper_ids_by_ids(self.chunks_db, chunk_ids)
 
     @property
     def is_ready(self) -> bool:
@@ -168,7 +184,8 @@ class HybridIndex:
         return (
             self.faiss_index is not None
             and self.bm25_db is not None
-            and len(self.chunks) > 0
+            and self.chunks_db is not None
+            and self.chunks_count > 0
         )
 
 
