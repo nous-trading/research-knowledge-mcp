@@ -45,8 +45,19 @@ def create(db_path: Path) -> sqlite3.Connection:
 
 
 def open_store(db_path: Path) -> sqlite3.Connection:
-    """Open an existing chunk store read-write."""
-    conn = sqlite3.connect(str(db_path))
+    """Open an existing chunk store.
+
+    Never creates the file: a bare ``sqlite3.connect`` on a missing path
+    would leave a 0-byte db behind, which then defeats both the migrate-index
+    completion check and the legacy-format guidance in ``HybridIndex.load``.
+    """
+    if not db_path.exists():
+        raise FileNotFoundError(
+            f"Chunk store not found: {db_path}. Run "
+            f"`RESEARCH_KNOWLEDGE_DATA_DIR={db_path.parent.parent} "
+            "python -m research_knowledge.cli migrate-index` once."
+        )
+    conn = sqlite3.connect(f"file:{db_path}?mode=rw", uri=True)
     # Schema guarantee for stores created before the paper_id index existed.
     conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_paper ON chunks(paper_id)")
     conn.commit()
@@ -170,9 +181,13 @@ def migrate_from_json(meta_path: Path, db_path: Path) -> int:
     raw: dict[str, dict] = meta.get("chunks", {})
 
     chunks = [Chunk.model_validate(raw[cid]) for cid in order]
-    conn = create(db_path)
+    # Build into a tmp file and rename atomically: chunks.db existing on disk
+    # is the completion marker (a killed migration must not look migrated).
+    tmp_path = db_path.with_name(db_path.name + ".tmp")
+    conn = create(tmp_path)
     add_chunks(conn, chunks)
     conn.close()
+    tmp_path.replace(db_path)
 
     meta_path.rename(meta_path.with_suffix(".json.bak"))
     logger.info("Migrated %d chunks. Legacy meta kept as %s.bak", len(chunks), meta_path.name)

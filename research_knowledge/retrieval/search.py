@@ -65,6 +65,11 @@ class HybridSearcher:
             rerank_candidates = int(
                 os.environ.get("RESEARCH_KNOWLEDGE_RERANK_CANDIDATES", "150")
             )
+        if rerank_candidates <= 0:
+            raise ValueError(
+                f"rerank_candidates must be positive, got {rerank_candidates} "
+                "(check RESEARCH_KNOWLEDGE_RERANK_CANDIDATES)"
+            )
         if not self.index.is_ready:
             logger.warning("Index is not ready. Run rebuild-index first.")
             return []
@@ -122,30 +127,22 @@ class HybridSearcher:
         if not fused:
             return []
 
-        # 4) Rerank → top-N (candidate texts fetched on demand from SQLite)
+        # 4) Rerank → top-N (candidate texts fetched on demand from SQLite).
+        # Direct indexing: a fused cid missing from chunks.db means the BM25/
+        # faiss indexes and the chunk store desynced — KeyError is honest.
         fused_texts = self.index.get_texts([cid for cid, _ in fused])
-        docs = []
-        valid_fused: list[tuple[str, float]] = []
-        for cid, score in fused:
-            if cid in fused_texts:
-                docs.append(fused_texts[cid])
-                valid_fused.append((cid, score))
-
-        if not docs:
-            return []
+        docs = [fused_texts[cid] for cid, _ in fused]
 
         reranked = self.reranker.rerank(query, docs, top_n=top_k)
 
         if debug:
             logger.info("Rerank results: %d", len(reranked))
             for orig_idx, score in reranked[:5]:
-                cid = valid_fused[orig_idx][0]
-                logger.info("  Rerank: %s → %.4f", cid, score)
+                logger.info("  Rerank: %s → %.4f", fused[orig_idx][0], score)
 
-        top_ids = [valid_fused[orig_idx][0] for orig_idx, _ in reranked]
+        top_ids = [fused[orig_idx][0] for orig_idx, _ in reranked]
         top_chunks = self.index.get_chunks(top_ids)
         return [
             ScoredChunk(chunk=top_chunks[cid], score=score)
-            for (orig_idx, score), cid in zip(reranked, top_ids, strict=True)
-            if cid in top_chunks
+            for (_, score), cid in zip(reranked, top_ids, strict=True)
         ]

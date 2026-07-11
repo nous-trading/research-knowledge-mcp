@@ -133,7 +133,8 @@ class HybridIndex:
                 raise RuntimeError(
                     f"Legacy index format at {index_dir}: found {_LEGACY_META_NAME} "
                     f"but no {_CHUNKS_DB_NAME}. Run "
-                    "`python -m research_knowledge.cli migrate-index` once."
+                    f"`RESEARCH_KNOWLEDGE_DATA_DIR={index_dir.parent} "
+                    "python -m research_knowledge.cli migrate-index` once."
                 )
             logger.warning(
                 "Chunk store not found: %s — returning empty index", chunks_db_path

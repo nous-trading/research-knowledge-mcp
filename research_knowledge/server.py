@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -52,10 +53,22 @@ async def _lifespan(app):
 app = FastMCP("research-knowledge", lifespan=_lifespan)
 
 
+# Serializes model use in a worker thread; searches run via asyncio.to_thread
+# so the shared HTTP daemon's event loop stays responsive during a cold model
+# load (~20 s) or rerank. The TTL watchdog takes the same lock non-blockingly,
+# so it can never unload models mid-search.
+_search_lock = threading.Lock()
+
+
 def _ensure_searcher():
-    """Initialize the searcher singleton (lazy)."""
+    """Initialize the searcher singleton (lazy).
+
+    An index that failed to load (missing/empty) is NOT pinned: the warm
+    daemon retries the load on the next search, so deploying data after the
+    first search does not require a service restart.
+    """
     global _index, _embedder, _reranker, _searcher
-    if _searcher is not None:
+    if _searcher is not None and _index.is_ready:
         return
 
     from research_knowledge.retrieval.embedding import DenseEmbedder
@@ -64,9 +77,22 @@ def _ensure_searcher():
     from research_knowledge.retrieval.search import HybridSearcher
 
     _index = HybridIndex.load()
-    _embedder = DenseEmbedder()
-    _reranker = Reranker()
+    if _embedder is None:
+        _embedder = DenseEmbedder()
+        _reranker = Reranker()
     _searcher = HybridSearcher(_index, _embedder, _reranker)
+
+
+def _run_search(query: str, top_k: int, paper_ids: list[str] | None):
+    """Blocking search body — runs in a worker thread under _search_lock.
+
+    Returns None when the index is not ready (caller renders the error).
+    """
+    with _search_lock:
+        _ensure_searcher()
+        if not _index.is_ready:
+            return None
+        return _searcher.search(query, top_k=top_k, paper_ids=paper_ids)
 
 
 # =============================================================================
@@ -96,8 +122,14 @@ async def _ttl_loop() -> None:
     while True:
         await asyncio.sleep(min(_MODEL_TTL_SECONDS, 60))
         if time.monotonic() - _last_search_ts >= _MODEL_TTL_SECONDS:
-            DenseEmbedder.unload()
-            Reranker.unload()
+            # Non-blocking: a search in flight holds the lock — skip and retry.
+            if not _search_lock.acquire(blocking=False):
+                continue
+            try:
+                DenseEmbedder.unload()
+                Reranker.unload()
+            finally:
+                _search_lock.release()
             return  # re-armed by the next search
 
 
@@ -153,15 +185,13 @@ async def search_papers(
         paper_ids: Restrict search to specific paper IDs (None = search all)
     """
     try:
-        _ensure_searcher()
-        if not _index.is_ready:
+        _touch_models()
+        results = await asyncio.to_thread(_run_search, query, top_k, paper_ids)
+        if results is None:
             return json.dumps(
                 {"error": "Index not found. Run rebuild-index first."},
                 ensure_ascii=False,
             )
-
-        _touch_models()
-        results = _searcher.search(query, top_k=top_k, paper_ids=paper_ids)
 
         briefs = _manifest_briefs()
 
